@@ -51,6 +51,35 @@ public class Ledger {
         return true;
     }
 
+    /** Resultado de intentar un cobro y saldo del usuario después de procesarlo. */
+    public record Cobro(Estado estado, long saldo) {
+        public enum Estado {
+            COBRADO,
+            YA_COBRADO,
+            SALDO_INSUFICIENTE
+        }
+    }
+
+    /**
+     * HU-20: descuenta al ganador el monto de la subasta que ganó. Un solo cobro por subasta: la referencia
+     * es el id de la subasta, así que repetir el cobro no vuelve a descontar. El saldo nunca queda negativo:
+     * si no alcanza, no se cobra nada.
+     */
+    @Transactional
+    public Cobro cobrar(UUID usuarioId, long monto, String referencia) {
+        if (movimientos.existsByUsuarioIdAndTipoAndReferencia(usuarioId, Movimiento.Tipo.COBRO, referencia)) {
+            return new Cobro(Cobro.Estado.YA_COBRADO, saldoDe(usuarioId));
+        }
+        Cuenta cuenta = cuentas.findByIdForUpdate(usuarioId).orElse(null);
+        long disponible = cuenta == null ? 0 : cuenta.getSaldo();
+        if (disponible < monto) {
+            return new Cobro(Cobro.Estado.SALDO_INSUFICIENTE, disponible);
+        }
+        long saldo = cuenta.aplicar(-monto);
+        movimientos.save(new Movimiento(usuarioId, Movimiento.Tipo.COBRO, -monto, saldo, referencia));
+        return new Cobro(Cobro.Estado.COBRADO, saldo);
+    }
+
     /** Saldo actual; un usuario sin cuenta (no Comprador o carga aún en camino) tiene 0. */
     @Transactional(readOnly = true)
     public long saldoDe(UUID usuarioId) {

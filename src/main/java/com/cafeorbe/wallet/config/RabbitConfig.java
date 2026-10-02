@@ -16,6 +16,7 @@ import org.springframework.context.annotation.Configuration;
 public class RabbitConfig {
 
     public static final String COLA_USUARIO_REGISTRADO = "wallet.usuario-registrado";
+    public static final String COLA_SUBASTA_CERRADA = "wallet.subasta-cerrada";
 
     @Bean
     TopicExchange eventosExchange() {
@@ -30,6 +31,17 @@ public class RabbitConfig {
     @Bean
     Binding bindingUsuarioRegistrado(Queue colaUsuarioRegistrado, TopicExchange eventosExchange) {
         return BindingBuilder.bind(colaUsuarioRegistrado).to(eventosExchange).with(Eventos.USUARIO_REGISTRADO);
+    }
+
+    /** HU-20: cola propia de wallet para el cierre de subastas; realtime recibe el mismo evento por la suya. */
+    @Bean
+    Queue colaSubastaCerrada() {
+        return QueueBuilder.durable(COLA_SUBASTA_CERRADA).build();
+    }
+
+    @Bean
+    Binding bindingSubastaCerrada(Queue colaSubastaCerrada, TopicExchange eventosExchange) {
+        return BindingBuilder.bind(colaSubastaCerrada).to(eventosExchange).with(Eventos.SUBASTA_CERRADA);
     }
 
     @Bean
