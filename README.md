@@ -257,7 +257,7 @@ El pipeline (`.github/workflows/ci.yml`) despliega en QA con cada cambio en `mai
 
 | Riesgo o deuda | Impacto | Acción propuesta |
 |---|---|---|
-| `/internal/orbes/{id}/saldo` no exige identidad | Si el servicio es accesible desde fuera, cualquiera puede leer el saldo de cualquier usuario | Ingress interno en el despliegue; el pipeline hoy lo crea como externo |
+| `/internal/orbes/{id}/saldo` no exige identidad | Si el servicio es accesible desde fuera, cualquiera puede leer el saldo de cualquier usuario | En el ambiente actual (express) el ingress interno no tiene efecto. Hace falta un secreto compartido entre el gateway y los servicios, o un ambiente con red propia |
 | Sin cola de mensajes muertos | Un evento que falla 5 veces se pierde y ese Comprador queda sin Orbes | Cola de mensajes muertos con alerta |
 | Sin reserva de saldo | Sobregiro posible con dos subastas ganadas a la vez; el `CHECK` haría fallar el segundo cobro | Reserva al pujar y liberación al ser superado, si el negocio lo requiere |
 | `evento_procesado` no se purga | La tabla crece indefinidamente | Limpieza periódica de registros antiguos |
