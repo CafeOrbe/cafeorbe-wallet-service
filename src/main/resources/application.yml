@@ -32,7 +32,7 @@ spring:
 cafeorbe:
   wallet:
     # Orbes que recibe un Comprador la primera vez que ingresa (HU-07)
-    saldo-inicial: ${WALLET_SALDO_INICIAL:1000}
+    saldo-inicial: ${WALLET_SALDO_INICIAL:100000000}
 
 management:
   endpoints:

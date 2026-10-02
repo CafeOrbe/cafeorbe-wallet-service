@@ -157,7 +157,7 @@ sequenceDiagram
     Note over PE,DB: Confirma la transacción
 ```
 
-Un Subastador no recibe Orbes: su evento se marca como procesado y nada más. El saldo inicial es configurable (`WALLET_SALDO_INICIAL`, 1000 por defecto).
+Un Subastador no recibe Orbes: su evento se marca como procesado y nada más. El saldo inicial es configurable (`WALLET_SALDO_INICIAL`, 100000000 por defecto).
 
 ## 6. Idempotencia
 
@@ -226,7 +226,7 @@ erDiagram
 | `DB_URL` `DB_USER` `DB_PASSWORD` | `jdbc:postgresql://localhost:5432/wallet_db` | Base de datos propia |
 | `RABBIT_HOST` `RABBIT_PORT` `RABBIT_USER` `RABBIT_PASSWORD` | `localhost:5672` | Broker de eventos |
 | `RABBIT_VHOST` `RABBIT_SSL` | `/` · `false` | Broker gestionado con TLS |
-| `WALLET_SALDO_INICIAL` | `1000` | Orbes que recibe un Comprador en su primer ingreso |
+| `WALLET_SALDO_INICIAL` | `100000000` | Orbes que recibe un Comprador en su primer ingreso |
 
 ## 11. Ejecución y pruebas
 

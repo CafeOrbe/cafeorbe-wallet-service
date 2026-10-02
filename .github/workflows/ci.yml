@@ -115,7 +115,7 @@ jobs:
                 "RABBIT_PASSWORD=$RABBIT_PASSWORD" \
                 "RABBIT_VHOST=ebmfpsvi" \
                 "RABBIT_SSL=true" \
-                "WALLET_SALDO_INICIAL=1000"
+                "WALLET_SALDO_INICIAL=100000000"
 
           else
 
@@ -141,7 +141,7 @@ jobs:
                 "RABBIT_PASSWORD=$RABBIT_PASSWORD" \
                 "RABBIT_VHOST=ebmfpsvi" \
                 "RABBIT_SSL=true" \
-                "WALLET_SALDO_INICIAL=1000"
+                "WALLET_SALDO_INICIAL=100000000"
 
           fi
 
@@ -220,7 +220,7 @@ jobs:
                 "RABBIT_PASSWORD=$RABBIT_PASSWORD" \
                 "RABBIT_VHOST=ebmfpsvi" \
                 "RABBIT_SSL=true" \
-                "WALLET_SALDO_INICIAL=1000"
+                "WALLET_SALDO_INICIAL=100000000"
 
           else
 
@@ -246,7 +246,7 @@ jobs:
                 "RABBIT_PASSWORD=$RABBIT_PASSWORD" \
                 "RABBIT_VHOST=ebmfpsvi" \
                 "RABBIT_SSL=true" \
-                "WALLET_SALDO_INICIAL=1000"
+                "WALLET_SALDO_INICIAL=100000000"
 
           fi
 
