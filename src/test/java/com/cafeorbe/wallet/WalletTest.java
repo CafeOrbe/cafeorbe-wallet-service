@@ -22,6 +22,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -117,5 +118,70 @@ class WalletTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.saldo").value(0));
         mvc.perform(get("/api/orbes/saldo")).andExpect(status().isUnauthorized());
+    }
+
+    @Test
+    @DisplayName("HU-06 · GET /api/orbes/movimientos devuelve el historial del usuario autenticado")
+    void consultaDeMovimientos() throws Exception {
+        UUID ana = UUID.randomUUID();
+        consumidor.alRecibir(evento(UUID.randomUUID(), ana, "COMPRADOR"));
+
+        mvc.perform(get("/api/orbes/movimientos").header(Cabeceras.USUARIO_ID, ana.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].tipo").value("CARGA_AUTOMATICA"))
+                .andExpect(jsonPath("$[0].monto").value(1000))
+                .andExpect(jsonPath("$[0].saldoResultante").value(1000))
+                .andExpect(jsonPath("$[0].referencia").value("saldo-inicial"))
+                .andExpect(jsonPath("$[0].id").isNotEmpty())
+                .andExpect(jsonPath("$[0].fecha").isNotEmpty());
+    }
+
+    @Test
+    @DisplayName("HU-06 · El historial de un usuario no incluye los movimientos de otro")
+    void losMovimientosSonPorUsuario() throws Exception {
+        UUID ana = UUID.randomUUID();
+        UUID bruno = UUID.randomUUID();
+        consumidor.alRecibir(evento(UUID.randomUUID(), ana, "COMPRADOR"));
+        consumidor.alRecibir(evento(UUID.randomUUID(), bruno, "COMPRADOR"));
+
+        mvc.perform(get("/api/orbes/movimientos").header(Cabeceras.USUARIO_ID, bruno.toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(1))
+                .andExpect(jsonPath("$[0].monto").value(1000));
+    }
+
+    @Test
+    @DisplayName("HU-06 · Un usuario sin movimientos recibe una lista vacía, no un 404")
+    void historialVacio() throws Exception {
+        mvc.perform(get("/api/orbes/movimientos").header(Cabeceras.USUARIO_ID, UUID.randomUUID().toString()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.length()").value(0));
+    }
+
+    @Test
+    @DisplayName("El saldo nunca queda negativo: la cuenta rechaza un retiro mayor que el saldo")
+    void elSaldoNoPuedeQuedarNegativo() {
+        UUID ana = UUID.randomUUID();
+        consumidor.alRecibir(evento(UUID.randomUUID(), ana, "COMPRADOR"));
+        var cuenta = cuentas.findById(ana).orElseThrow();
+
+        assertThatThrownBy(() -> cuenta.aplicar(-1001))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("El saldo no puede quedar negativo");
+
+        assertThat(cuenta.getSaldo()).isEqualTo(1000);
+        assertThat(cuenta.getUsuarioId()).isEqualTo(ana);
+    }
+
+    @Test
+    @DisplayName("Restar exactamente el saldo lo deja en cero, no lo rechaza")
+    void elSaldoPuedeQuedarEnCero() {
+        UUID ana = UUID.randomUUID();
+        consumidor.alRecibir(evento(UUID.randomUUID(), ana, "COMPRADOR"));
+        var cuenta = cuentas.findById(ana).orElseThrow();
+
+        assertThat(cuenta.aplicar(-1000)).isZero();
+        assertThat(cuenta.getSaldo()).isZero();
     }
 }
