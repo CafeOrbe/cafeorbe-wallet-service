@@ -17,7 +17,9 @@ public class Movimiento {
 
     public enum Tipo {
         CARGA_AUTOMATICA,
-        COBRO
+        COBRO,
+        /** HU-24: Orbes que recibe el Subastador por la subasta que vendió. */
+        ABONO_VENTA
     }
 
     @Id

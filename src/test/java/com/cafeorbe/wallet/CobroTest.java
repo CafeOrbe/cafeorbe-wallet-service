@@ -3,6 +3,7 @@ package com.cafeorbe.wallet;
 import com.cafeorbe.contracts.Cabeceras;
 import com.cafeorbe.contracts.EventoEnvelope;
 import com.cafeorbe.contracts.Eventos;
+import com.cafeorbe.contracts.eventos.OrbesAbonados;
 import com.cafeorbe.contracts.eventos.OrbesCobrados;
 import com.cafeorbe.contracts.eventos.SubastaCerrada;
 import com.cafeorbe.contracts.eventos.UsuarioRegistrado;
@@ -148,6 +149,90 @@ class CobroTest {
         assertThat(ledger.saldoDe(ana)).isEqualTo(1000);
         assertThat(ledger.ultimosMovimientos(ana, 10)).hasSize(1);
         verify(rabbit, never()).convertAndSend(anyString(), eq(Eventos.ORBES_COBRADOS), any(Object.class));
+    }
+
+    // ── HU-24: lo cobrado al ganador se abona al Subastador ───────────────
+
+    private EventoEnvelope<SubastaCerrada> vendida(UUID eventId, UUID subasta, UUID ganador, long monto, UUID subastador) {
+        return new EventoEnvelope<>(eventId, Eventos.SUBASTA_CERRADA, 1, Instant.now(),
+                new SubastaCerrada(subasta, "Lote", "FINALIZADA", ganador, "Ana", monto, 3, Instant.now(), subastador));
+    }
+
+    @Test
+    @DisplayName("HU-24 · Abono al Subastador: lo que se descuenta al ganador le llega completo, con su movimiento y su aviso")
+    void abonoAlSubastador() throws Exception {
+        UUID luis = UUID.randomUUID();
+        UUID subasta = UUID.randomUUID();
+
+        cierre.alRecibir(vendida(UUID.randomUUID(), subasta, ana, 300L, luis));
+
+        assertThat(ledger.saldoDe(ana)).isEqualTo(700);
+        assertThat(ledger.saldoDe(luis)).isEqualTo(300);
+        var venta = ledger.ultimosMovimientos(luis, 10).getFirst();
+        assertThat(venta.getTipo().name()).isEqualTo("ABONO_VENTA");
+        assertThat(venta.getMonto()).isEqualTo(300);
+        assertThat(venta.getSaldoResultante()).isEqualTo(300);
+        assertThat(venta.getReferencia()).isEqualTo(subasta.toString());
+
+        @SuppressWarnings("unchecked")
+        ArgumentCaptor<EventoEnvelope<OrbesAbonados>> aviso = ArgumentCaptor.forClass(EventoEnvelope.class);
+        verify(rabbit).convertAndSend(eq(Eventos.EXCHANGE), eq(Eventos.ORBES_ABONADOS), aviso.capture());
+        assertThat(aviso.getValue().datos()).isEqualTo(new OrbesAbonados(subasta, luis, 300, 300));
+
+        mvc.perform(get("/api/orbes/ganancias").header(Cabeceras.USUARIO_ID, luis.toString()))
+                .andExpect(jsonPath("$.total").value(300))
+                .andExpect(jsonPath("$.ventas.length()").value(1))
+                .andExpect(jsonPath("$.ventas[0].monto").value(300))
+                .andExpect(jsonPath("$.ventas[0].referencia").value(subasta.toString()));
+    }
+
+    @Test
+    @DisplayName("HU-24 · Sin doble abono: repetir el cierre de una subasta no vuelve a abonar, y varias ventas se suman")
+    void sinDobleAbono() throws Exception {
+        UUID luis = UUID.randomUUID();
+        UUID subasta = UUID.randomUUID();
+        UUID mismoEvento = UUID.randomUUID();
+
+        cierre.alRecibir(vendida(mismoEvento, subasta, ana, 300L, luis));
+        cierre.alRecibir(vendida(mismoEvento, subasta, ana, 300L, luis));
+        cierre.alRecibir(vendida(UUID.randomUUID(), subasta, ana, 300L, luis));
+        assertThat(ledger.saldoDe(luis)).isEqualTo(300);
+        assertThat(ledger.abonar(luis, 300, subasta.toString())).isEmpty();
+
+        cierre.alRecibir(vendida(UUID.randomUUID(), UUID.randomUUID(), bruno, 200L, luis));
+
+        assertThat(ledger.saldoDe(luis)).isEqualTo(500);
+        assertThat(ledger.totalGanado(luis)).isEqualTo(500);
+        mvc.perform(get("/api/orbes/ganancias").header(Cabeceras.USUARIO_ID, luis.toString()))
+                .andExpect(jsonPath("$.total").value(500))
+                .andExpect(jsonPath("$.ventas.length()").value(2))
+                .andExpect(jsonPath("$.ventas[0].monto").value(200));
+    }
+
+    @Test
+    @DisplayName("HU-24 · Si no se pudo cobrar al ganador, el Subastador no recibe nada")
+    void sinCobroNoHayAbono() {
+        UUID luis = UUID.randomUUID();
+
+        cierre.alRecibir(vendida(UUID.randomUUID(), UUID.randomUUID(), ana, 1500L, luis));
+
+        assertThat(ledger.saldoDe(ana)).isEqualTo(1000);
+        assertThat(ledger.saldoDe(luis)).isZero();
+        assertThat(ledger.ultimosMovimientos(luis, 10)).isEmpty();
+        verify(rabbit, never()).convertAndSend(anyString(), eq(Eventos.ORBES_ABONADOS), any(Object.class));
+    }
+
+    @Test
+    @DisplayName("HU-24 · Un cierre publicado antes de esta historia (sin Subastador) cobra pero no abona a nadie")
+    void cierreSinSubastador() throws Exception {
+        cierre.alRecibir(cerrada(UUID.randomUUID(), UUID.randomUUID(), ana, 300L));
+
+        assertThat(ledger.saldoDe(ana)).isEqualTo(700);
+        verify(rabbit, never()).convertAndSend(anyString(), eq(Eventos.ORBES_ABONADOS), any(Object.class));
+        // Un Comprador no tiene ventas: sus ganancias son 0.
+        mvc.perform(get("/api/orbes/ganancias").header(Cabeceras.USUARIO_ID, ana.toString()))
+                .andExpect(jsonPath("$.total").value(0))
+                .andExpect(jsonPath("$.ventas.length()").value(0));
     }
 
     @Test
