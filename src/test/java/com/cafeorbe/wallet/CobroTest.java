@@ -151,6 +151,18 @@ class CobroTest {
     }
 
     @Test
+    @DisplayName("HU-20 · Un ganador sin cuenta no se cobra ni rompe el cierre, aunque el monto sea 0")
+    void ganadorSinCuenta() {
+        UUID sinCuenta = UUID.randomUUID();
+
+        assertThat(ledger.cobrar(sinCuenta, 300, "subasta-1")).isEqualTo(new Ledger.Cobro(Ledger.Cobro.Estado.SALDO_INSUFICIENTE, 0));
+        assertThat(ledger.cobrar(sinCuenta, 0, "subasta-2")).isEqualTo(new Ledger.Cobro(Ledger.Cobro.Estado.SALDO_INSUFICIENTE, 0));
+
+        assertThat(ledger.ultimosMovimientos(sinCuenta, 10)).isEmpty();
+        assertThat(cuentas.findById(sinCuenta)).isEmpty();
+    }
+
+    @Test
     @DisplayName("HU-20 · Tras el cobro se publica OrbesCobrados con el saldo nuevo; si el broker falla, el cobro se conserva")
     void avisoDelCobro() {
         UUID subasta = UUID.randomUUID();

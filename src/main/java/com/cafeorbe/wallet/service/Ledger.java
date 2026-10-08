@@ -70,10 +70,13 @@ public class Ledger {
         if (movimientos.existsByUsuarioIdAndTipoAndReferencia(usuarioId, Movimiento.Tipo.COBRO, referencia)) {
             return new Cobro(Cobro.Estado.YA_COBRADO, saldoDe(usuarioId));
         }
+        // Sin cuenta no hay de dónde cobrar, sea cual sea el monto: el ganador no es Comprador o su carga aún no llega.
         Cuenta cuenta = cuentas.findByIdForUpdate(usuarioId).orElse(null);
-        long disponible = cuenta == null ? 0 : cuenta.getSaldo();
-        if (disponible < monto) {
-            return new Cobro(Cobro.Estado.SALDO_INSUFICIENTE, disponible);
+        if (cuenta == null) {
+            return new Cobro(Cobro.Estado.SALDO_INSUFICIENTE, 0);
+        }
+        if (cuenta.getSaldo() < monto) {
+            return new Cobro(Cobro.Estado.SALDO_INSUFICIENTE, cuenta.getSaldo());
         }
         long saldo = cuenta.aplicar(-monto);
         movimientos.save(new Movimiento(usuarioId, Movimiento.Tipo.COBRO, -monto, saldo, referencia));
