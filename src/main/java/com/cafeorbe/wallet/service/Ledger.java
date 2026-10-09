@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.UUID;
 
 /**
@@ -81,6 +82,36 @@ public class Ledger {
         long saldo = cuenta.aplicar(-monto);
         movimientos.save(new Movimiento(usuarioId, Movimiento.Tipo.COBRO, -monto, saldo, referencia));
         return new Cobro(Cobro.Estado.COBRADO, saldo);
+    }
+
+    /**
+     * HU-24: abona al Subastador los Orbes de la subasta que vendió. Un solo abono por subasta: la referencia es
+     * el id de la subasta. Un Subastador no recibe carga inicial, así que su cuenta se crea con su primera venta.
+     *
+     * @return el saldo después del abono, o vacío si esa subasta ya se le había abonado
+     */
+    @Transactional
+    public OptionalLong abonar(UUID usuarioId, long monto, String referencia) {
+        if (movimientos.existsByUsuarioIdAndTipoAndReferencia(usuarioId, Movimiento.Tipo.ABONO_VENTA, referencia)) {
+            return OptionalLong.empty();
+        }
+        Cuenta cuenta = cuentas.findByIdForUpdate(usuarioId).orElseGet(() -> cuentas.save(new Cuenta(usuarioId)));
+        long saldo = cuenta.aplicar(monto);
+        movimientos.save(new Movimiento(usuarioId, Movimiento.Tipo.ABONO_VENTA, monto, saldo, referencia));
+        return OptionalLong.of(saldo);
+    }
+
+    /** HU-24: total de Orbes que el Subastador ha recibido por sus ventas. */
+    @Transactional(readOnly = true)
+    public long totalGanado(UUID usuarioId) {
+        return movimientos.sumarPorTipo(usuarioId, Movimiento.Tipo.ABONO_VENTA);
+    }
+
+    /** HU-24: las ventas más recientes del Subastador, de la más nueva a la más vieja. */
+    @Transactional(readOnly = true)
+    public List<Movimiento> ultimasVentas(UUID usuarioId, int limite) {
+        return movimientos.findByUsuarioIdAndTipoOrderByCreadoEnDesc(usuarioId, Movimiento.Tipo.ABONO_VENTA,
+                PageRequest.of(0, limite));
     }
 
     /** Saldo actual; un usuario sin cuenta (no Comprador o carga aún en camino) tiene 0. */

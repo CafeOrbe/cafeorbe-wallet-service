@@ -18,6 +18,10 @@ public class OrbesController {
     public record MovimientoDto(UUID id, String tipo, long monto, long saldoResultante, String referencia, Instant fecha) {
     }
 
+    /** HU-24: lo que el Subastador ha ganado: el total y sus ventas más recientes. */
+    public record GananciasDto(long total, List<MovimientoDto> ventas) {
+    }
+
     private final Ledger ledger;
 
     public OrbesController(Ledger ledger) {
@@ -36,6 +40,16 @@ public class OrbesController {
                 .map(m -> new MovimientoDto(m.getId(), m.getTipo().name(), m.getMonto(), m.getSaldoResultante(),
                         m.getReferencia(), m.getCreadoEn()))
                 .toList();
+    }
+
+    /** HU-24: Orbes ganados por el Subastador autenticado. En cada venta, {@code referencia} es el id de la subasta. */
+    @GetMapping("/api/orbes/ganancias")
+    public GananciasDto misGanancias(@RequestHeader(Cabeceras.USUARIO_ID) UUID usuarioId) {
+        var ventas = ledger.ultimasVentas(usuarioId, 50).stream()
+                .map(m -> new MovimientoDto(m.getId(), m.getTipo().name(), m.getMonto(), m.getSaldoResultante(),
+                        m.getReferencia(), m.getCreadoEn()))
+                .toList();
+        return new GananciasDto(ledger.totalGanado(usuarioId), ventas);
     }
 
     /** Consulta síncrona que usa auction al validar una puja (HU-14). El gateway no la expone. */

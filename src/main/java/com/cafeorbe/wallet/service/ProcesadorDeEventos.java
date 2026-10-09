@@ -3,6 +3,7 @@ package com.cafeorbe.wallet.service;
 import com.cafeorbe.contracts.EventoEnvelope;
 import com.cafeorbe.contracts.Eventos;
 import com.cafeorbe.contracts.Rol;
+import com.cafeorbe.contracts.eventos.OrbesAbonados;
 import com.cafeorbe.contracts.eventos.OrbesCobrados;
 import com.cafeorbe.contracts.eventos.SubastaCerrada;
 import com.cafeorbe.contracts.eventos.UsuarioRegistrado;
@@ -55,6 +56,9 @@ public class ProcesadorDeEventos {
     /**
      * HU-20: cobra al ganador la puja con la que ganó. Los compradores que no ganaron no se tocan, y una
      * subasta desierta no cobra a nadie.
+     *
+     * <p>HU-24: lo cobrado se abona al Subastador en la misma transacción, así los Orbes nunca salen de una
+     * cuenta sin llegar a la otra. Si no se pudo cobrar, no hay abono.
      */
     @Transactional
     public void subastaCerrada(EventoEnvelope<SubastaCerrada> evento) {
@@ -68,8 +72,9 @@ public class ProcesadorDeEventos {
             switch (cobro.estado()) {
                 case COBRADO -> {
                     log.info("Subasta {}: cobrados {} Orbes a {}", datos.subastaId(), datos.montoFinal(), datos.ganadorId());
-                    avisarTrasConfirmar(new OrbesCobrados(datos.subastaId(), datos.ganadorId(), datos.montoFinal(),
-                            cobro.saldo()));
+                    avisarTrasConfirmar(Eventos.ORBES_COBRADOS, datos.subastaId(),
+                            new OrbesCobrados(datos.subastaId(), datos.ganadorId(), datos.montoFinal(), cobro.saldo()));
+                    abonarAlSubastador(datos);
                 }
                 case YA_COBRADO -> log.info("Subasta {}: el cobro a {} ya existía", datos.subastaId(), datos.ganadorId());
                 // Los Orbes no se reservan al pujar: el ganador pudo gastar su saldo en otra subasta antes del cierre.
@@ -81,17 +86,30 @@ public class ProcesadorDeEventos {
         procesados.save(new EventoProcesado(evento.eventId()));
     }
 
+    /** HU-24: los eventos anteriores a esta historia no traen al Subastador; esos cierres no generan abono. */
+    private void abonarAlSubastador(SubastaCerrada datos) {
+        if (datos.subastadorId() == null) {
+            log.info("Subasta {}: el cierre no indica el Subastador, no se abona", datos.subastaId());
+            return;
+        }
+        ledger.abonar(datos.subastadorId(), datos.montoFinal(), datos.subastaId().toString()).ifPresent(saldo -> {
+            log.info("Subasta {}: abonados {} Orbes a {}", datos.subastaId(), datos.montoFinal(), datos.subastadorId());
+            avisarTrasConfirmar(Eventos.ORBES_ABONADOS, datos.subastaId(),
+                    new OrbesAbonados(datos.subastaId(), datos.subastadorId(), datos.montoFinal(), saldo));
+        });
+    }
+
     /**
-     * Avisa del cobro para que la pantalla del comprador refresque su saldo. Se publica solo si el cobro quedó
-     * confirmado. Es un aviso, no una garantía: si el broker falla, la pantalla igual consulta el saldo cada pocos segundos.
+     * Avisa del cobro o del abono para que la pantalla refresque el saldo. Se publica solo si la operación quedó
+     * confirmada. Es un aviso, no una garantía: si el broker falla, la pantalla igual consulta el saldo cada pocos segundos.
      */
-    private void avisarTrasConfirmar(OrbesCobrados cobrados) {
+    private void avisarTrasConfirmar(String tipo, UUID subastaId, Object datos) {
         Runnable aviso = () -> {
             try {
-                rabbit.convertAndSend(Eventos.EXCHANGE, Eventos.ORBES_COBRADOS, new EventoEnvelope<>(UUID.randomUUID(),
-                        Eventos.ORBES_COBRADOS, 1, Instant.now(), cobrados));
+                rabbit.convertAndSend(Eventos.EXCHANGE, tipo, new EventoEnvelope<>(UUID.randomUUID(), tipo, 1,
+                        Instant.now(), datos));
             } catch (RuntimeException e) {
-                log.warn("No se pudo publicar OrbesCobrados de la subasta {}: {}", cobrados.subastaId(), e.getMessage());
+                log.warn("No se pudo publicar {} de la subasta {}: {}", tipo, subastaId, e.getMessage());
             }
         };
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
