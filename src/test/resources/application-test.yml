@@ -9,5 +9,12 @@ spring:
         auto-startup: false
 
 cafeorbe:
+  seguridad:
+    credencial-interna: credencial-de-prueba
   wallet:
     saldo-inicial: 1000
+
+logging:
+  structured:
+    format:
+      console: ""
