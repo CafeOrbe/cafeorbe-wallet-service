@@ -104,10 +104,12 @@ public class ProcesadorDeEventos {
      * confirmada. Es un aviso, no una garantía: si el broker falla, la pantalla igual consulta el saldo cada pocos segundos.
      */
     private void avisarTrasConfirmar(String tipo, UUID subastaId, Object datos) {
+        // OBS-01: el aviso sale con el mismo correlationId del evento que lo originó.
+        String correlationId = org.slf4j.MDC.get(com.cafeorbe.wallet.seguridad.FiltroDeCorrelacion.MDC_CLAVE);
         Runnable aviso = () -> {
             try {
                 rabbit.convertAndSend(Eventos.EXCHANGE, tipo, new EventoEnvelope<>(UUID.randomUUID(), tipo, 1,
-                        Instant.now(), datos));
+                        Instant.now(), datos), com.cafeorbe.wallet.seguridad.CorrelacionDeEventos.propagar(correlationId));
             } catch (RuntimeException e) {
                 log.warn("No se pudo publicar {} de la subasta {}: {}", tipo, subastaId, e.getMessage());
             }

@@ -36,7 +36,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static com.cafeorbe.wallet.PeticionesInternas.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 
 /** HU-20: cobro de Orbes al comprador ganador cuando cierra la subasta. El saldo inicial de prueba es 1000. */
@@ -99,6 +99,35 @@ class CobroTest {
     }
 
     @Test
+    @DisplayName("OBS-01 · El cobro conserva el correlationId del cierre: OrbesCobrados sale con la misma cabecera")
+    void cobroConservaLaCorrelacion() {
+        var procesador = org.mockito.ArgumentCaptor.forClass(org.springframework.amqp.core.MessagePostProcessor.class);
+
+        cierre.alRecibir(cerrada(UUID.randomUUID(), UUID.randomUUID(), ana, 300L), "cierre-abc");
+
+        verify(rabbit).convertAndSend(eq(Eventos.EXCHANGE), eq(Eventos.ORBES_COBRADOS), any(Object.class), procesador.capture());
+        var mensaje = new org.springframework.amqp.core.Message(new byte[0]);
+        procesador.getValue().postProcessMessage(mensaje);
+        assertThat((String) mensaje.getMessageProperties().getHeader("x-correlation-id")).isEqualTo("cierre-abc");
+        // Terminado el evento, el correlationId no se queda pegado al hilo del consumidor.
+        assertThat(org.slf4j.MDC.get("correlationId")).isNull();
+    }
+
+    @Test
+    @DisplayName("OBS-01 · Un evento sin cabecera de correlación usa su eventId: ningún cobro queda sin identificador")
+    void sinCabeceraUsaElEventId() {
+        UUID eventId = UUID.randomUUID();
+        var procesador = org.mockito.ArgumentCaptor.forClass(org.springframework.amqp.core.MessagePostProcessor.class);
+
+        cierre.alRecibir(cerrada(eventId, UUID.randomUUID(), ana, 300L), null);
+
+        verify(rabbit).convertAndSend(eq(Eventos.EXCHANGE), eq(Eventos.ORBES_COBRADOS), any(Object.class), procesador.capture());
+        var mensaje = new org.springframework.amqp.core.Message(new byte[0]);
+        procesador.getValue().postProcessMessage(mensaje);
+        assertThat((String) mensaje.getMessageProperties().getHeader("x-correlation-id")).isEqualTo("evento-" + eventId);
+    }
+
+    @Test
     @DisplayName("HU-20 · Compradores no ganadores: su saldo permanece igual que antes de la subasta")
     void noGanadores() {
         cierre.alRecibir(cerrada(UUID.randomUUID(), UUID.randomUUID(), ana, 300L));
@@ -119,7 +148,7 @@ class CobroTest {
 
         assertThat(ledger.saldoDe(ana)).isEqualTo(700);
         assertThat(ledger.ultimosMovimientos(ana, 10)).hasSize(2);
-        verify(rabbit, times(1)).convertAndSend(eq(Eventos.EXCHANGE), eq(Eventos.ORBES_COBRADOS), any(Object.class));
+        verify(rabbit, times(1)).convertAndSend(eq(Eventos.EXCHANGE), eq(Eventos.ORBES_COBRADOS), any(Object.class), any(org.springframework.amqp.core.MessagePostProcessor.class));
     }
 
     @Test
@@ -138,7 +167,7 @@ class CobroTest {
 
         assertThat(ledger.saldoDe(ana)).isEqualTo(1000);
         assertThat(ledger.saldoDe(bruno)).isEqualTo(1000);
-        verify(rabbit, never()).convertAndSend(anyString(), eq(Eventos.ORBES_COBRADOS), any(Object.class));
+        verify(rabbit, never()).convertAndSend(anyString(), eq(Eventos.ORBES_COBRADOS), any(Object.class), any(org.springframework.amqp.core.MessagePostProcessor.class));
     }
 
     @Test
@@ -148,7 +177,7 @@ class CobroTest {
 
         assertThat(ledger.saldoDe(ana)).isEqualTo(1000);
         assertThat(ledger.ultimosMovimientos(ana, 10)).hasSize(1);
-        verify(rabbit, never()).convertAndSend(anyString(), eq(Eventos.ORBES_COBRADOS), any(Object.class));
+        verify(rabbit, never()).convertAndSend(anyString(), eq(Eventos.ORBES_COBRADOS), any(Object.class), any(org.springframework.amqp.core.MessagePostProcessor.class));
     }
 
     // ── HU-24: lo cobrado al ganador se abona al Subastador ───────────────
@@ -176,7 +205,7 @@ class CobroTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<EventoEnvelope<OrbesAbonados>> aviso = ArgumentCaptor.forClass(EventoEnvelope.class);
-        verify(rabbit).convertAndSend(eq(Eventos.EXCHANGE), eq(Eventos.ORBES_ABONADOS), aviso.capture());
+        verify(rabbit).convertAndSend(eq(Eventos.EXCHANGE), eq(Eventos.ORBES_ABONADOS), aviso.capture(), any(org.springframework.amqp.core.MessagePostProcessor.class));
         assertThat(aviso.getValue().datos()).isEqualTo(new OrbesAbonados(subasta, luis, 300, 300));
 
         mvc.perform(get("/api/orbes/ganancias").header(Cabeceras.USUARIO_ID, luis.toString()))
@@ -219,7 +248,7 @@ class CobroTest {
         assertThat(ledger.saldoDe(ana)).isEqualTo(1000);
         assertThat(ledger.saldoDe(luis)).isZero();
         assertThat(ledger.ultimosMovimientos(luis, 10)).isEmpty();
-        verify(rabbit, never()).convertAndSend(anyString(), eq(Eventos.ORBES_ABONADOS), any(Object.class));
+        verify(rabbit, never()).convertAndSend(anyString(), eq(Eventos.ORBES_ABONADOS), any(Object.class), any(org.springframework.amqp.core.MessagePostProcessor.class));
     }
 
     @Test
@@ -228,7 +257,7 @@ class CobroTest {
         cierre.alRecibir(cerrada(UUID.randomUUID(), UUID.randomUUID(), ana, 300L));
 
         assertThat(ledger.saldoDe(ana)).isEqualTo(700);
-        verify(rabbit, never()).convertAndSend(anyString(), eq(Eventos.ORBES_ABONADOS), any(Object.class));
+        verify(rabbit, never()).convertAndSend(anyString(), eq(Eventos.ORBES_ABONADOS), any(Object.class), any(org.springframework.amqp.core.MessagePostProcessor.class));
         // Un Comprador no tiene ventas: sus ganancias son 0.
         mvc.perform(get("/api/orbes/ganancias").header(Cabeceras.USUARIO_ID, ana.toString()))
                 .andExpect(jsonPath("$.total").value(0))
@@ -255,11 +284,11 @@ class CobroTest {
 
         @SuppressWarnings("unchecked")
         ArgumentCaptor<EventoEnvelope<OrbesCobrados>> aviso = ArgumentCaptor.forClass(EventoEnvelope.class);
-        verify(rabbit).convertAndSend(eq(Eventos.EXCHANGE), eq(Eventos.ORBES_COBRADOS), aviso.capture());
+        verify(rabbit).convertAndSend(eq(Eventos.EXCHANGE), eq(Eventos.ORBES_COBRADOS), aviso.capture(), any(org.springframework.amqp.core.MessagePostProcessor.class));
         assertThat(aviso.getValue().datos()).isEqualTo(new OrbesCobrados(subasta, ana, 300, 700));
 
         doThrow(new IllegalStateException("broker caído")).when(rabbit)
-                .convertAndSend(anyString(), anyString(), any(Object.class));
+                .convertAndSend(anyString(), anyString(), any(Object.class), any(org.springframework.amqp.core.MessagePostProcessor.class));
         cierre.alRecibir(cerrada(UUID.randomUUID(), UUID.randomUUID(), bruno, 100L));
         assertThat(ledger.saldoDe(bruno)).isEqualTo(900);
     }
