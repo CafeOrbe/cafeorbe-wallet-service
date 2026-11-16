@@ -3,6 +3,8 @@ package com.cafeorbe.wallet.controller;
 import com.cafeorbe.contracts.Cabeceras;
 import com.cafeorbe.contracts.dto.SaldoDto;
 import com.cafeorbe.wallet.service.Ledger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestHeader;
@@ -21,6 +23,8 @@ public class OrbesController {
     /** HU-24: lo que el Subastador ha ganado: el total y sus ventas más recientes. */
     public record GananciasDto(long total, List<MovimientoDto> ventas) {
     }
+
+    private static final Logger log = LoggerFactory.getLogger(OrbesController.class);
 
     private final Ledger ledger;
 
@@ -52,9 +56,15 @@ public class OrbesController {
         return new GananciasDto(ledger.totalGanado(usuarioId), ventas);
     }
 
-    /** Consulta síncrona que usa auction al validar una puja (HU-14). El gateway no la expone. */
+    /**
+     * Consulta síncrona que usa auction al validar una puja (HU-14). El gateway no la expone.
+     * OBS-01: deja una línea con el correlationId de la puja (llega en X-Correlation-Id y lo pone el MDC), para que
+     * el recorrido de una puja en Log Analytics muestre también el paso por wallet.
+     */
     @GetMapping("/internal/orbes/{usuarioId}/saldo")
     public SaldoDto saldoDe(@PathVariable UUID usuarioId) {
-        return new SaldoDto(usuarioId, ledger.saldoDe(usuarioId));
+        long saldo = ledger.saldoDe(usuarioId);
+        log.atInfo().addKeyValue("usuario", usuarioId).addKeyValue("saldo", saldo).log("Saldo consultado por auction");
+        return new SaldoDto(usuarioId, saldo);
     }
 }
