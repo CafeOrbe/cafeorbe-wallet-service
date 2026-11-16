@@ -31,4 +31,18 @@ class LogsJsonDeSeguridadTest {
             logs.registradoUnaVez("acceso_interno_rechazado", "corr-logs-json-1");
         }
     }
+
+    @Test
+    @DisplayName("OBS-01 · La consulta de saldo de auction queda en el log JSON con el correlationId de la puja")
+    void consultaDeSaldoQuedaEnElLog() throws Exception {
+        var usuario = java.util.UUID.randomUUID();
+        try (var logs = LogsJson.de(com.cafeorbe.wallet.controller.OrbesController.class.getName())) {
+            mvc.perform(PeticionesInternas.get("/internal/orbes/{id}/saldo", usuario)
+                            .header("X-Correlation-Id", "corr-de-la-puja"))
+                    .andExpect(status().isOk());
+
+            var linea = logs.mensajeUnaVez("Saldo consultado por auction", "corr-de-la-puja");
+            org.assertj.core.api.Assertions.assertThat(linea.path("usuario").asText()).isEqualTo(usuario.toString());
+        }
+    }
 }
