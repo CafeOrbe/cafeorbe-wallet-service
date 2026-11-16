@@ -9,6 +9,7 @@ import com.cafeorbe.contracts.eventos.SubastaCerrada;
 import com.cafeorbe.contracts.eventos.UsuarioRegistrado;
 import com.cafeorbe.wallet.model.EventoProcesado;
 import com.cafeorbe.wallet.repository.EventoProcesadoRepository;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
@@ -32,11 +33,14 @@ public class ProcesadorDeEventos {
     private final EventoProcesadoRepository procesados;
     private final Ledger ledger;
     private final RabbitTemplate rabbit;
+    private final MeterRegistry metricas;
 
-    public ProcesadorDeEventos(EventoProcesadoRepository procesados, Ledger ledger, RabbitTemplate rabbit) {
+    public ProcesadorDeEventos(EventoProcesadoRepository procesados, Ledger ledger, RabbitTemplate rabbit,
+                               MeterRegistry metricas) {
         this.procesados = procesados;
         this.ledger = ledger;
         this.rabbit = rabbit;
+        this.metricas = metricas;
     }
 
     @Transactional
@@ -72,6 +76,7 @@ public class ProcesadorDeEventos {
             switch (cobro.estado()) {
                 case COBRADO -> {
                     log.info("Subasta {}: cobrados {} Orbes a {}", datos.subastaId(), datos.montoFinal(), datos.ganadorId());
+                    registrarGasto(datos, "cobrado");
                     avisarTrasConfirmar(Eventos.ORBES_COBRADOS, datos.subastaId(),
                             new OrbesCobrados(datos.subastaId(), datos.ganadorId(), datos.montoFinal(), cobro.saldo()));
                     abonarAlSubastador(datos);
@@ -79,11 +84,31 @@ public class ProcesadorDeEventos {
                 case YA_COBRADO -> log.info("Subasta {}: el cobro a {} ya existía", datos.subastaId(), datos.ganadorId());
                 // Los Orbes no se reservan al pujar: el ganador pudo gastar su saldo en otra subasta antes del cierre.
                 // No se cobra parcialmente ni se reintenta: el saldo no va a aparecer solo. Queda registrado para revisarlo.
-                case SALDO_INSUFICIENTE -> log.error("Subasta {}: no se pudo cobrar {} Orbes a {}, su saldo es {}",
-                        datos.subastaId(), datos.montoFinal(), datos.ganadorId(), cobro.saldo());
+                case SALDO_INSUFICIENTE -> {
+                    log.error("Subasta {}: no se pudo cobrar {} Orbes a {}, su saldo es {}",
+                            datos.subastaId(), datos.montoFinal(), datos.ganadorId(), cobro.saldo());
+                    registrarGasto(datos, "saldo_insuficiente");
+                }
             }
         }
         procesados.save(new EventoProcesado(evento.eventId()));
+    }
+
+    /**
+     * OBS-01 (tablero de negocio): Orbes gastados y cobros por resultado. Se cuenta solo si la transacción del
+     * cobro quedó confirmada; un evento repetido no llega aquí (se descarta antes), así que no se cuenta dos veces.
+     * La línea de log lleva {@code evento=orbes_gastados} para seguirla en Log Analytics.
+     */
+    private void registrarGasto(SubastaCerrada datos, String resultado) {
+        alConfirmar(() -> {
+            metricas.counter("cafeorbe.wallet.cobros", "resultado", resultado).increment();
+            if ("cobrado".equals(resultado)) {
+                metricas.counter("cafeorbe.wallet.orbes.gastados").increment(datos.montoFinal());
+                log.atInfo().addKeyValue("evento", "orbes_gastados").addKeyValue("subastaId", datos.subastaId())
+                        .addKeyValue("usuario", datos.ganadorId()).addKeyValue("monto", datos.montoFinal())
+                        .log("Orbes gastados: {} en la subasta {}", datos.montoFinal(), datos.subastaId());
+            }
+        });
     }
 
     /** HU-24: los eventos anteriores a esta historia no traen al Subastador; esos cierres no generan abono. */
@@ -114,15 +139,20 @@ public class ProcesadorDeEventos {
                 log.warn("No se pudo publicar {} de la subasta {}: {}", tipo, subastaId, e.getMessage());
             }
         };
+        alConfirmar(aviso);
+    }
+
+    /** Ejecuta la acción cuando la transacción en curso quede confirmada, o de inmediato si no hay transacción. */
+    private static void alConfirmar(Runnable accion) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    aviso.run();
+                    accion.run();
                 }
             });
         } else {
-            aviso.run();
+            accion.run();
         }
     }
 }

@@ -52,6 +52,7 @@ class CobroTest {
     @Autowired MovimientoRepository movimientos;
     @Autowired EventoProcesadoRepository procesados;
     @Autowired MockMvc mvc;
+    @Autowired io.micrometer.core.instrument.MeterRegistry metricas;
     @MockitoBean RabbitTemplate rabbit;
 
     UUID ana;
@@ -178,6 +179,29 @@ class CobroTest {
         assertThat(ledger.saldoDe(ana)).isEqualTo(1000);
         assertThat(ledger.ultimosMovimientos(ana, 10)).hasSize(1);
         verify(rabbit, never()).convertAndSend(anyString(), eq(Eventos.ORBES_COBRADOS), any(Object.class), any(org.springframework.amqp.core.MessagePostProcessor.class));
+    }
+
+    private double contado(String nombre, String... etiquetas) {
+        var contador = metricas.find(nombre).tags(etiquetas).counter();
+        return contador == null ? 0 : contador.count();
+    }
+
+    @Test
+    @DisplayName("OBS-01 · Orbes gastados: el cobro suma su monto una sola vez; el repetido, la desierta y el saldo insuficiente no suman")
+    void orbesGastados() {
+        double gastados = contado("cafeorbe.wallet.orbes.gastados");
+        double cobrados = contado("cafeorbe.wallet.cobros", "resultado", "cobrado");
+        double sinSaldo = contado("cafeorbe.wallet.cobros", "resultado", "saldo_insuficiente");
+        UUID eventId = UUID.randomUUID();
+
+        cierre.alRecibir(cerrada(eventId, UUID.randomUUID(), ana, 300L));
+        cierre.alRecibir(cerrada(eventId, UUID.randomUUID(), ana, 300L));          // mismo evento repetido
+        cierre.alRecibir(cerrada(UUID.randomUUID(), UUID.randomUUID(), null, null)); // desierta
+        cierre.alRecibir(cerrada(UUID.randomUUID(), UUID.randomUUID(), bruno, 5000L)); // saldo insuficiente
+
+        assertThat(contado("cafeorbe.wallet.orbes.gastados")).isEqualTo(gastados + 300);
+        assertThat(contado("cafeorbe.wallet.cobros", "resultado", "cobrado")).isEqualTo(cobrados + 1);
+        assertThat(contado("cafeorbe.wallet.cobros", "resultado", "saldo_insuficiente")).isEqualTo(sinSaldo + 1);
     }
 
     // ── HU-24: lo cobrado al ganador se abona al Subastador ───────────────
